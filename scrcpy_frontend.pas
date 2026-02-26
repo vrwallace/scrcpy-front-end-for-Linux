@@ -723,10 +723,11 @@ end;
 
 procedure TMainForm.btnScanClick(Sender: TObject);
 var
-  Output, Line: string;
+  Output, Line, Serial, State: string;
   Lines: TStringList;
   i: Integer;
   Parts: TStringArray;
+  PastHeader: Boolean;
 begin
   lbDevices.Clear;
   SetStatus('Scanning...');
@@ -735,14 +736,41 @@ begin
   Lines := TStringList.Create;
   try
     Lines.Text := Output;
-    for i := 1 to Lines.Count - 1 do
+    PastHeader := False;
+    for i := 0 to Lines.Count - 1 do
     begin
       Line := Trim(Lines[i]);
+
+      // The real device list starts after "List of devices attached"
+      if Pos('List of devices attached', Line) > 0 then
+      begin
+        PastHeader := True;
+        Continue;
+      end;
+
+      // Skip everything before the header and skip blank / daemon lines
+      if not PastHeader then Continue;
       if Line = '' then Continue;
-      Parts := Line.Split([#9, ' '], TStringSplitOptions.ExcludeEmpty);
+      // Skip adb daemon info lines (start with '*')
+      if (Length(Line) > 0) and (Line[1] = '*') then Continue;
+
+      // A valid device line is: <serial> <TAB> <state>
+      // Split on tab first, then fall back to spaces
+      Parts := Line.Split([#9], TStringSplitOptions.ExcludeEmpty);
+      if Length(Parts) < 2 then
+        Parts := Line.Split([' '], TStringSplitOptions.ExcludeEmpty);
       if Length(Parts) < 2 then Continue;
-      if Parts[1] = 'device' then lbDevices.Items.Add(Parts[0])
-      else lbDevices.Items.Add(Parts[0] + '  [' + Parts[1] + ']');
+
+      Serial := Trim(Parts[0]);
+      State  := Trim(Parts[1]);
+
+      // Skip if serial looks like an adb message word
+      if (Serial = 'List') or (Serial = '*') or (Serial = '') then Continue;
+
+      if State = 'device' then
+        lbDevices.Items.Add(Serial)
+      else
+        lbDevices.Items.Add(Serial + '  [' + State + ']');
     end;
   finally Lines.Free; end;
   if lbDevices.Count = 0 then
