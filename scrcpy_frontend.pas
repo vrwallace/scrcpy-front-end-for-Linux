@@ -120,8 +120,10 @@ type
     function  BuildCommand: string;
     function  GetSelectedDevice: string;
     procedure SetStatus(const Msg: string; IsError: Boolean = False);
-    function  RunADB(const Args: string; out Output: string): Boolean;
+    function  RunADB(const Args: array of string; out Output: string): Boolean;
     function  DetectScrcpyVersion: Integer;
+    function  ShellQuote(const Value: string): string;
+    function  ValidateOptions(out ErrorMsg: string): Boolean;
   end;
 
 const
@@ -550,7 +552,6 @@ end;
 procedure TMainForm.BuildAudioTab;
 var
   Row: TPanel;
-  Pad: TPanel;
 
   function MakeTabRow(AHeight: Integer = 36): TPanel;
   begin
@@ -609,7 +610,6 @@ end;
 procedure TMainForm.BuildAdvancedTab;
 var
   Row: TPanel;
-  Pad: TPanel;
   pnlLeft, pnlRight: TPanel;
 
   function MakeTabRow(AHeight: Integer = 36): TPanel;
@@ -698,23 +698,25 @@ end;
 
 { ── ADB runner ───────────────────────────────────────── }
 
-function TMainForm.RunADB(const Args: string; out Output: string): Boolean;
+function TMainForm.RunADB(const Args: array of string; out Output: string): Boolean;
 var
   P: TProcess;
   S: TStringList;
+  i: Integer;
 begin
   Result := False; Output := '';
   P := TProcess.Create(nil);
   S := TStringList.Create;
   try
     P.Executable  := 'adb';
-    P.Parameters.Text := StringReplace(Args, ' ', LineEnding, [rfReplaceAll]);
+    for i := Low(Args) to High(Args) do
+      P.Parameters.Add(Args[i]);
     P.Options     := [poUsePipes, poWaitOnExit, poStderrToOutPut];
     try
       P.Execute;
       S.LoadFromStream(P.Output);
       Output := S.Text;
-      Result := True;
+      Result := P.ExitStatus = 0;
     except on E: Exception do Output := 'Error: ' + E.Message; end;
   finally S.Free; P.Free; end;
 end;
@@ -731,8 +733,8 @@ var
 begin
   lbDevices.Clear;
   SetStatus('Scanning...');
-  if not RunADB('devices', Output) then
-  begin SetStatus('adb not found in PATH.', True); Exit; end;
+  if not RunADB(['devices'], Output) then
+  begin SetStatus('ADB scan failed: ' + Trim(Output), True); Exit; end;
   Lines := TStringList.Create;
   try
     Lines.Text := Output;
@@ -783,12 +785,14 @@ begin
 end;
 
 procedure TMainForm.btnConnectClick(Sender: TObject);
-var Output: string;
+var Address, Output: string;
 begin
-  if Trim(edtConnectIP.Text) = '' then Exit;
+  Address := Trim(edtConnectIP.Text);
+  if Address = '' then begin SetStatus('Enter an IP address and port.', True); Exit; end;
+  if Pos(' ', Address) > 0 then begin SetStatus('The TCP address may not contain spaces.', True); Exit; end;
   SetStatus('Connecting...');
-  RunADB('connect ' + edtConnectIP.Text, Output);
-  SetStatus(Trim(Output));
+  if not RunADB(['connect', Address], Output) then
+  begin SetStatus('Connection failed: ' + Trim(Output), True); Exit; end;
   btnScanClick(nil);
 end;
 
@@ -797,8 +801,8 @@ var Dev, Output: string;
 begin
   Dev := GetSelectedDevice;
   if Dev = '' then begin SetStatus('No device selected.', True); Exit; end;
-  RunADB('disconnect ' + Dev, Output);
-  SetStatus(Trim(Output));
+  if not RunADB(['disconnect', Dev], Output) then
+  begin SetStatus('Disconnect failed: ' + Trim(Output), True); Exit; end;
   btnScanClick(nil);
 end;
 
@@ -893,8 +897,11 @@ begin
   if spnMaxFPS.Value  > 0 then P.Parameters.Add('--max-fps='  + IntToStr(spnMaxFPS.Value));
   if spnMaxSize.Value > 0 then P.Parameters.Add('--max-size=' + IntToStr(spnMaxSize.Value));
 
-  if cmbRotation.ItemIndex > 0 then
-    P.Parameters.Add('--rotation=' + IntToStr(cmbRotation.ItemIndex));
+  case cmbRotation.ItemIndex of
+    1: P.Parameters.Add('--rotation=90');
+    2: P.Parameters.Add('--rotation=180');
+    3: P.Parameters.Add('--rotation=270');
+  end;
   case cmbOrientation.ItemIndex of
     1: P.Parameters.Add('--lock-video-orientation=0');
     2: P.Parameters.Add('--lock-video-orientation=1');
@@ -972,22 +979,60 @@ begin
     BuildParams(P);
     Cmd := 'scrcpy';
     for i := 0 to P.Parameters.Count - 1 do
-      Cmd := Cmd + ' ' + P.Parameters[i];
+      Cmd := Cmd + ' ' + ShellQuote(P.Parameters[i]);
     Result := Cmd;
   finally P.Free; end;
 end;
 
 procedure TMainForm.OptionChanged(Sender: TObject);
 begin
+  // scrcpy accepts only one keyboard and one mouse mode at a time.
+  if Sender = chkKeyboardHID then
+  begin
+    if chkKeyboardHID.Checked then chkPhysicalKeyboard.Checked := False;
+  end
+  else if Sender = chkPhysicalKeyboard then
+  begin
+    if chkPhysicalKeyboard.Checked then chkKeyboardHID.Checked := False;
+  end;
   if Assigned(memoCmd) then
     memoCmd.Text := BuildCommand;
+end;
+
+function TMainForm.ShellQuote(const Value: string): string;
+begin
+  if (Value <> '') and (Value.IndexOfAny([' ', #9, '''', '"', '$', '`', '\',
+      ';', '&', '|', '(', ')', '<', '>', '*', '?', '[', ']', '#']) < 0) then
+    Exit(Value);
+  Result := '''' + StringReplace(Value, '''', '''"''"''', [rfReplaceAll]) + '''';
+end;
+
+function TMainForm.ValidateOptions(out ErrorMsg: string): Boolean;
+var
+  RecordDir: string;
+begin
+  ErrorMsg := '';
+  if (Trim(edtCrop.Text) <> '') and
+     (Length(Trim(edtCrop.Text).Split([':'])) <> 4) then
+    ErrorMsg := 'Crop must use W:H:X:Y format.'
+  else if Trim(edtRecordFile.Text) <> '' then
+  begin
+    RecordDir := ExtractFileDir(ExpandFileName(Trim(edtRecordFile.Text)));
+    if not DirectoryExists(RecordDir) then
+      ErrorMsg := 'The recording folder does not exist: ' + RecordDir;
+  end;
+  Result := ErrorMsg = '';
 end;
 
 { ── Launch ───────────────────────────────────────────── }
 
 procedure TMainForm.btnLaunchClick(Sender: TObject);
-var P: TProcess;
+var P: TProcess; ErrorMsg: string;
 begin
+  if FScrcpyMajor = 0 then
+  begin SetStatus('scrcpy is not installed or is not in PATH.', True); Exit; end;
+  if not ValidateOptions(ErrorMsg) then
+  begin SetStatus(ErrorMsg, True); MessageDlg('Invalid Options', ErrorMsg, mtError, [mbOK], 0); Exit; end;
   SetStatus('Launching scrcpy...');
   Application.ProcessMessages;
   P := TProcess.Create(nil);

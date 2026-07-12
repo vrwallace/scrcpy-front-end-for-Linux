@@ -10,7 +10,7 @@ A Free Pascal / Lazarus GUI front-end for [scrcpy](https://github.com/Genymobile
 
 - **Device scanning** — calls `adb devices` and lists all connected devices
 - **TCP/IP connect** — connect to a device wirelessly by IP:Port
-- **Version detection** — automatically detects scrcpy v1.x vs v2.x and uses the correct flags for each
+- **Version detection** — automatically detects scrcpy and adapts legacy v1 flags; modern v2–v4 releases use the current flags
 - **Live command preview** — shows the exact scrcpy command that will be run as you change options
 - **Copy to clipboard** — copy the command to run manually in a terminal
 - **Full option coverage** across four tabs:
@@ -28,7 +28,7 @@ A Free Pascal / Lazarus GUI front-end for [scrcpy](https://github.com/Genymobile
 | [Lazarus IDE](https://www.lazarus-ide.org/) | 2.0 or later recommended |
 | Free Pascal Compiler | Included with Lazarus |
 | [ADB](https://developer.android.com/tools/adb) | Must be in `PATH` |
-| [scrcpy](https://github.com/Genymobile/scrcpy) | v1.x or v2.x, must be in `PATH` |
+| [scrcpy](https://github.com/Genymobile/scrcpy) | v1.x through v4.x, must be in `PATH` |
 
 ---
 
@@ -76,14 +76,14 @@ After that you can unplug the USB cable and use the TCP Connect field in the app
 
 The app detects the installed scrcpy version at startup and the title bar shows which version was found. Flags are automatically adapted:
 
-| Option | scrcpy v1.x | scrcpy v2.x |
+| Option | scrcpy v1.x | scrcpy v2–v4 |
 |---|---|---|
 | Video bitrate | `--bit-rate` | `--video-bit-rate` |
 | Audio | not supported | `--audio-bit-rate`, `--audio-codec` |
 | Video codec | not supported | `--video-codec` |
 | HID keyboard/mouse | not supported | `--keyboard=aoa`, `--mouse=aoa` |
 
-v2.x-only options (Audio tab, HID controls) are silently skipped when running on v1.x.
+Modern-only options (Audio tab, HID controls) are silently skipped when running on v1.x.
 
 ---
 
